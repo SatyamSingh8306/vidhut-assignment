@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patient Watch — Caregiver Console</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #2f81f7;
+    --ok: #3fb950; --warn: #d29922; --crit: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  .ws-badge { font-size: 11px; padding: 3px 10px; border-radius: 12px; background: var(--crit); color: #fff; }
+  .ws-badge.on { background: var(--ok); color: #04110a; }
+  main { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
+  #login { max-width: 380px; margin: 12vh auto; text-align: center; }
+  #login input { width: 100%; padding: 10px; margin: 8px 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; }
+  button { padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--text); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #cam { width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #000; aspect-ratio: 16/9; object-fit: cover; }
+  .cam-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .stats { display: flex; gap: 8px; margin-left: auto; color: var(--muted); font-size: 12px; }
+  #gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; overflow-y: auto; max-height: 62vh; padding-right: 4px; }
+  .card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg); }
+  .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
+  .card .body { padding: 8px 10px; }
+  .card .time { font-size: 11px; color: var(--muted); }
+  .intent { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin: 4px 0; }
+  .intent.attn { background: var(--crit); color: #fff; }
+  .intent.ok { background: var(--ok); color: #04110a; }
+  .intent.mid { background: var(--warn); color: #111; }
+  .intent.def { background: var(--border); color: var(--text); }
+  .desc { font-size: 12px; color: var(--text); }
+  .meta { font-size: 11px; color: var(--muted); }
+  .pending { font-size: 12px; color: var(--warn); font-style: italic; }
+  #alarms { max-height: 46vh; overflow-y: auto; }
+  .alarm { display: flex; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; align-items: center; }
+  .alarm.crit { border-left: 4px solid var(--crit); }
+  .alarm.warn { border-left: 4px solid var(--warn); }
+  .alarm .msg { flex: 1; font-size: 13px; }
+  .alarm .when { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .alarm.acked { opacity: .45; }
+  .ack { font-size: 11px; padding: 4px 10px; }
+  .empty { color: var(--muted); font-style: italic; text-align: center; padding: 24px 0; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1 style="margin-bottom:4px">Patient Watch</h1>
+  <p style="color:var(--muted);font-size:13px">Caregiver console — doctors & nurses</p>
+  <input id="apiKey" type="password" placeholder="API key" autocomplete="off">
+  <button id="connectBtn" style="width:100%">Open Console</button>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>Patient Watch</h1>
+    <span id="wsBadge" class="ws-badge">offline</span>
+    <button class="ghost" id="logout" style="margin-left:auto">Logout</button>
+  </header>
+  <main>
+    <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <section>
+        <h2>Live Camera</h2>
+        <img id="cam" alt="Live camera">
+        <div class="cam-row">
+          <button id="captureBtn">Capture + Analyze</button>
+          <div class="stats"><span id="imgCount">0 images</span></div>
+        </div>
+      </section>
+      <section>
+        <h2>Alarms</h2>
+        <div id="alarms"><div class="empty">No alarms</div></div>
+      </section>
+    </div>
+    <section>
+      <h2>Captured Images &amp; VLM Analysis</h2>
+      <div id="gallery"><div class="empty">Waiting for captures…</div></div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let apiKey = "";
+let ws = null;
+let pollTimer = null;
+
+// Reconnect helper used by .fn_ naming parity? (none)
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+}
+
+function intentClass(a) {
+  if (!a) return "def";
+  if (a.requires_attention || ["asking_for_help", "distressed"].includes(a.intent)) return "attn";
+  if (["uncomfortable", "agitated", "restless"].includes(a.intent) || ["agitated", "restless"].includes(a.behavioral_state)) return "mid";
+  if (["calm", "neutral", "greeting"].includes(a.intent)) return "ok";
+  return "def";
+}
+
+function imageCard(img) {
+  const a = img.analysis;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.id = img.id;
+  const body = a
+    ? `<span class="intent ${intentClass(a)}">${a.intent}</span>
+       <div class="desc">${a.description || ""}</div>
+       <div class="meta">state: ${a.behavioral_state} · conf ${(a.confidence*100).toFixed(0)}% · unc ${(a.uncertainty*100).toFixed(0)}% · ${fmtDate(a.created_at)}</div>`
+    : `<div class="pending">VLM analysis pending…</div>`;
+  card.innerHTML = `
+    <img src="${img.file_url}" alt="captured frame" loading="lazy">
+    <div class="body">
+      <div class="time">${fmtDate(img.created_at)} · ${img.source}${img.help_detected ? " · HELP FLAG" : ""}</div>
+      ${body}
+    </div>`;
+  return card;
+}
+
+function alarmRow(alarm, event) {
+  const row = document.createElement("div");
+  row.className = `alarm ${alarm.severity === "critical" ? "crit" : "warn"} ${alarm.status !== "active" ? "acked" : ""}`;
+  if (event === "acknowledged") row.style.display = "none";
+  row.innerHTML = `
+    <div class="msg"><strong style="text-transform:uppercase;font-size:11px">${alarm.source}</strong> ${alarm.message}</div>
+    <span class="when">${fmtDate(alarm.created_at)}</span>
+    ${alarm.status === "active" ? `<button class="ack ghost">Ack</button>` : ""}`;
+  const ackBtn = row.querySelector(".ack");
+  if (ackBtn) ackBtn.onclick = async () => {
+    await fetch(`/api/alarms/${alarm.id}/acknowledge`, {method: "POST", headers: {"X-API-Key": apiKey}});
+    row.remove();
+    if (!$("#alarms").children.length) $("#alarms").innerHTML = `<div class="empty">No alarms</div>`;
+  };
+  return row;
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {...opts, headers: {"X-API-Key": apiKey, ...(opts.headers || {})}});
+  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+  return res.json();
+}
+
+async function loadImages() {
+  const imgs = await api("/api/images?limit=24");
+  const g = $("gallery");
+  g.innerHTML = "";
+  if (!imgs.length) { g.innerHTML = `<div class="empty">Waiting for captures…</div>`; }
+  else imgs.forEach(img => g.appendChild(imageCard(img)));
+  $("imgCount").textContent = `${imgs.length} images`;
+}
+
+async function loadAlarms() {
+  const alarms = await api("/api/alarms?limit=30");
+  const box = $("alarms");
+  box.innerHTML = "";
+  if (!alarms.length) box.innerHTML = `<div class="empty">No alarms</div>`;
+  alarms.forEach(a => box.appendChild(alarmRow(a, "load")));
+}
+
+function startCamPolling() {
+  clearInterval(pollTimer);
+  const cam = $("cam");
+  const refresh = () => { cam.src = `/api/camera/frame?ts=${Date.now()}&token=${encodeURIComponent(apiKey)}`; };
+  refresh();
+  pollTimer = setInterval(refresh, 500);
+}
+
+function handleMessage(msg) {
+  const {event, data} = msg;
+  if (event === "alarm") {
+    const a = data.alarm;
+    const box = $("alarms");
+    const empty = box.querySelector(".empty"); if (empty) empty.remove();
+    box.prepend(alarmRow(a, data.event));
+  } else if (event === "image") {
+    $("imgCount").textContent = `capturing…`;
+  } else if (event === "analysis") {
+    loadImages();
+  }
+}
+
+function connectWS() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/api/events?token=${encodeURIComponent(apiKey)}`);
+  ws.onopen = () => { $("wsBadge").textContent = "live"; $("wsBadge").classList.add("on"); };
+  ws.onclose = () => {
+    $("wsBadge").textContent = "offline"; $("wsBadge").classList.remove("on");
+    if (apiKey) setTimeout(connectWS, 2000);
+  };
+  ws.onmessage = (m) => { try { handleMessage(JSON.parse(m.data)); } catch {} };
+}
+
+async function enter() {
+  $("#login").style.display = "none";
+  $("app").style.display = "block";
+  await Promise.all([loadImages(), loadAlarms()]);
+  startCamPolling();
+  connectWS();
+}
+
+$("connectBtn").onclick = async () => {
+  apiKey = $("apiKey").value.trim();
+  if (!apiKey) return;
+  try { await api("/api/health"); } catch { $("apiKey").value = ""; $("apiKey").placeholder = "Invalid key"; return; }
+  enter();
+};
+$("apiKey").addEventListener("keydown", (e) => { if (e.key === "Enter") $("connectBtn").click(); });
+
+$("captureBtn").onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = "Capturing…";
+  try {
+    await api("/api/capture", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({note: "manual capture"})});
+    await loadImages();
+  } catch (err) { alert("Capture failed: " + err.message); }
+  e.target.disabled = false; e.target.textContent = "Capture + Analyze";
+};
+
+$("logout").onclick = () => {
+  apiKey = ""; clearInterval(pollTimer); if (ws) ws.close();
+  $("app").style.display = "none"; $("#login").style.display = "block";
+};
+</script>
+</body>
+</html>

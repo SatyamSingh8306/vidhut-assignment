@@ -1,0 +1,2 @@
+"""Patient Watch application."""
+

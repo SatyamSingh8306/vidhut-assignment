@@ -1,0 +1,20 @@
+[project]
+name = "patient-watch"
+version = "0.1.0"
+description = "Local patient alarm detection and response system"
+requires-python = ">=3.11"
+dependencies = [
+  "groq>=0.30,<1",
+  "fastapi>=0.115,<1", "numpy>=2,<3",
+  "opencv-python>=4.10,<5", "pydantic-settings>=2.6,<3",
+  "sounddevice>=0.5,<1", "pymongo>=4.13,<5",
+  "ultralytics>=8.3,<9", "uvicorn[standard]>=0.32,<1",
+]
+
+[project.optional-dependencies]
+test = ["httpx>=0.28,<1", "pytest>=8,<9", "pytest-asyncio>=0.24,<1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
