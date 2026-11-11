@@ -8,7 +8,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
-from fastapi.staticfiles import StaticFiles
+
 from app import alarms
 from app.clinical_summary import ClinicalSummarizer
 from app.config import get_settings
@@ -47,7 +47,8 @@ async def lifespan(_app: FastAPI):
     video_monitor = VideoMonitor(settings, emit_alarm, loop)
     audio_monitor = AudioMonitor(settings, emit_alarm, loop)
     image_worker = ImageWorker(vlm_analyzer, lambda: video_monitor.latest_frame if video_monitor else None, capture_interval=float(settings.capture_interval))
-    video_monitor.start(); audio_monitor.start()
+    video_monitor.start()
+    audio_monitor.start()
     image_worker.start()
     try:
         from pymongo import DESCENDING
@@ -60,11 +61,16 @@ async def lifespan(_app: FastAPI):
     yield
     if image_worker:
         await image_worker.stop()
-    video_monitor.stop(); audio_monitor.stop()
+    video_monitor.stop()
+    audio_monitor.stop()
     await close_database()
 
 
-app = FastAPI(title="Vision-Based Intelligent System for Elderly Monitoring & Communication", version="0.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="Vision-Based Intelligent System for Elderly Monitoring & Communication",
+    version="0.3.0",
+    lifespan=lifespan
+)
 
 
 def _iso(document: dict, key: str = "created_at") -> str:
@@ -105,12 +111,18 @@ async def _analysis_for(image_id: str) -> dict | None:
 
 
 @app.get("/api/health", tags=["system"])
-async def health() -> dict[str, str]: return {"status": "ok"}
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/api/status", response_model=MonitorStatus, tags=["system"])
 async def monitor_status(_auth: AuthDep) -> MonitorStatus:
-    return MonitorStatus(camera=video_monitor.status if video_monitor else "starting", audio=audio_monitor.status if audio_monitor else "starting", model=settings.pose_model, clinical_briefing="ready" if settings.groq_api_key else "not configured")
+    return MonitorStatus(
+        camera=video_monitor.status if video_monitor else "starting",
+        audio=audio_monitor.status if audio_monitor else "starting",
+        model=settings.pose_model,
+        clinical_briefing="ready" if settings.groq_api_key else "not configured"
+    )
 
 
 # ---------- Images + VLM ----------
@@ -173,6 +185,61 @@ async def list_analyses(_auth: AuthDep, limit: int = Query(20, ge=1, le=100)):
     } async for doc in cursor]
 
 
+# ---------- Multimodal Data ----------
+
+@app.get("/api/multimodal/latest", tags=["vision"])
+async def latest_multimodal(_auth: AuthDep) -> dict:
+    """Get latest multimodal frame analysis."""
+    if video_monitor is None or video_monitor.latest_multimodal is None:
+        raise HTTPException(status_code=503, detail="No multimodal data available")
+    mm = video_monitor.latest_multimodal
+    return {
+        "timestamp": mm.timestamp,
+        "facial_expression": mm.facial_expression,
+        "facial_confidence": mm.facial_confidence,
+        "hand_gesture": mm.hand_gesture,
+        "hand_confidence": mm.hand_confidence,
+        "isl_intent": mm.isl_intent,
+        "isl_confidence": mm.isl_confidence,
+        "visual_speech": mm.visual_speech,
+        "speech_confidence": mm.speech_confidence,
+        "help_detected": mm.help_detected,
+        "help_symbol": mm.help_symbol,
+        "help_confidence": mm.help_confidence,
+        "fused_intent": mm.fused_intent,
+        "fused_confidence": mm.fused_confidence,
+        "uncertainty": mm.uncertainty,
+        "vlm_intent": mm.vlm_intent,
+        "vlm_confidence": mm.vlm_confidence,
+        "behavioral_state": mm.behavioral_state,
+    }
+
+
+@app.get("/api/multimodal/history", tags=["vision"])
+async def multimodal_history(_auth: AuthDep, limit: int = Query(50, ge=1, le=200)) -> list:
+    """Get recent multimodal history (from personalization/temporal context)."""
+    if video_monitor is None:
+        raise HTTPException(status_code=503, detail="Monitor not running")
+    # Return temporal context history
+    return [
+        {
+            "intent": item[0],
+            "confidence": item[1],
+            "timestamp": item[2]
+        }
+        for item in list(video_monitor.temporal_context.intent_history)[-limit:]
+    ]
+
+
+@app.get("/api/personalization/{patient_id}", tags=["vision"])
+async def get_personalization(patient_id: str, _auth: AuthDep) -> dict:
+    """Get patient personalization patterns."""
+    if video_monitor is None:
+        raise HTTPException(status_code=503, detail="Monitor not running")
+    patterns = video_monitor.personalization.get_patient_history(patient_id)
+    return {"patient_id": patient_id, "patterns": patterns}
+
+
 # ---------- Alarms ----------
 
 @app.get("/api/alarms", response_model=list[AlarmRead], tags=["alarms"])
@@ -190,9 +257,12 @@ async def patient_call(_auth: AuthDep) -> AlarmRead:
 @app.post("/api/vitals", response_model=AlarmRead | None, tags=["monitoring"])
 async def ingest_vitals(reading: VitalsReading, _auth: AuthDep):
     message = None
-    if reading.oxygen_saturation < 90: message = f"Low oxygen saturation: {reading.oxygen_saturation}%"
-    elif reading.heart_rate < 50 or reading.heart_rate > 120: message = f"Heart rate outside safe range: {reading.heart_rate} bpm"
-    if message is None: return None
+    if reading.oxygen_saturation < 90:
+        message = f"Low oxygen saturation: {reading.oxygen_saturation}%"
+    elif reading.heart_rate < 50 or reading.heart_rate > 120:
+        message = f"Heart rate outside safe range: {reading.heart_rate} bpm"
+    if message is None:
+        return None
     alarm = await alarms.create_alarm(AlarmCreate(source=AlarmSource.VITALS, severity=Severity.CRITICAL, message=message))
     await event_hub.publish("alarm", {"event": "created", "alarm": alarm.model_dump(mode="json")})
     return alarm
@@ -201,7 +271,8 @@ async def ingest_vitals(reading: VitalsReading, _auth: AuthDep):
 @app.post("/api/alarms/{alarm_id}/acknowledge", response_model=AlarmRead, tags=["alarms"])
 async def acknowledge(alarm_id: str, _auth: AuthDep) -> AlarmRead:
     alarm = await alarms.acknowledge_alarm(alarm_id)
-    if alarm is None: raise HTTPException(status_code=404, detail="Alarm not found")
+    if alarm is None:
+        raise HTTPException(status_code=404, detail="Alarm not found")
     await event_hub.publish("alarm", {"event": "acknowledged", "alarm": alarm.model_dump(mode="json")})
     return alarm
 
@@ -226,17 +297,23 @@ async def create_briefing(
 
 @app.get("/api/camera/frame", tags=["monitoring"])
 async def camera_frame(_auth: AuthDep) -> Response:
-    if video_monitor is None or video_monitor.latest_frame is None: raise HTTPException(status_code=503, detail="Camera frame unavailable")
+    if video_monitor is None or video_monitor.latest_frame is None:
+        raise HTTPException(status_code=503, detail="Camera frame unavailable")
     return Response(video_monitor.latest_frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.websocket("/api/events")
 async def events(socket: WebSocket, token: str = Query(...)) -> None:
-    if not valid_api_key(token): await socket.close(code=1008); return
+    if not valid_api_key(token):
+        await socket.close(code=1008)
+        return
     await event_hub.connect(socket)
     try:
-        while True: await socket.receive_text()
-    except WebSocketDisconnect: event_hub.disconnect(socket)
+        while True:
+            await socket.receive_text()
+    except WebSocketDisconnect:
+        event_hub.disconnect(socket)
 
 
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+# Note: Streamlit frontend runs separately on port 8501
+# Run: streamlit run streamlit_app.py

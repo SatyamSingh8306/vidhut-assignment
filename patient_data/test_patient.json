@@ -1,0 +1,7 @@
+{
+  "typical_intents": {
+    "expr_sad": 0.2127272727272727,
+    "expr_happy": 0.4132173913043478
+  },
+  "last_updated": 14751.703
+}

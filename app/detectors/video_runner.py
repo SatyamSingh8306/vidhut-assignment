@@ -122,8 +122,18 @@ def run_source(
                 writer.write(annotated)
             if display:
                 if not window_created:
-                    cv2.namedWindow("Patient Watch - press q to quit", cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow("Patient Watch - press q to quit", 1280, 720)
+                    cv2.namedWindow("Patient Watch - press q to quit", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+                    # Get actual video resolution
+                    cam_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    cam_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    # Calculate display size maintaining aspect ratio, max 1280x720
+                    max_w, max_h = 1280, 720
+                    if cam_width > max_w or cam_height > max_h:
+                        scale = min(max_w / cam_width, max_h / cam_height)
+                        disp_w, disp_h = int(cam_width * scale), int(cam_height * scale)
+                    else:
+                        disp_w, disp_h = cam_width, cam_height
+                    cv2.resizeWindow("Patient Watch - press q to quit", disp_w, disp_h)
                     window_created = True
                 cv2.imshow("Patient Watch - press q to quit", annotated)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
